@@ -1,0 +1,4 @@
+(executable
+ (name main)
+ (flags (:standard -w -a))
+ (libraries zarith fpexeclib))

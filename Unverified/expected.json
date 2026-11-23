@@ -1,0 +1,7 @@
+{
+  "comment": "Proof sizes in bytes of native proofs at N = 4096, 128-bit parameters, rate 1/4. Entries: [ballots, C1, C2, bytes]. Keys: proximity regime (FP_PROX_DIV). Sizes are deterministic; a change means the byte format or the parameters changed.",
+  "native_proof_bytes": {
+    "3": [[256, 16384, 1024, 2194984], [1024, 32768, 1024, 3780856], [4096, 65536, 1024, 6992544]],
+    "2": [[256, 8192, 512, 1588824], [1024, 16384, 512, 2823448], [4096, 32768, 1024, 5312566]]
+  }
+}

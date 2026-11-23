@@ -1,0 +1,6 @@
+(include_subdirs qualified)
+(rocq.theory
+ (name Examples)
+ (synopsis "Instances at GF(q^2): the concrete field, the executable verifiers and prover, zero knowledge for the layout of mix_derive")
+ (modules (:standard))
+ (theories Stdlib Algebra Utility Probability Crypto Coqprime Bignums))

@@ -1,0 +1,28 @@
+(subdir Hshalib
+ (library
+  (name hshalib)
+  (wrapped false)
+  (modules hsha)
+  (libraries zarith hacl-star)))
+
+(subdir Fpexeclib
+ (rocq.extraction
+  (prelude Extraction)
+  (extracted_files fpexec.ml fpexec.mli)
+  (theories Stdlib Algebra Utility Probability Crypto Examples Coqprime Bignums))
+ (library
+  (name fpexeclib)
+  (modules fpexec)
+  (flags (:standard -w -a))
+  (libraries zarith hshalib)))
+
+(subdir Fpprovelib
+ (rocq.extraction
+  (prelude Extraction)
+  (extracted_files fpprove_core.ml fpprove_core.mli)
+  (theories Stdlib Algebra Utility Probability Crypto Examples Coqprime Bignums))
+ (library
+  (name fpprovelib)
+  (modules fpprove_core)
+  (flags (:standard -w -a))
+  (libraries zarith hshalib)))

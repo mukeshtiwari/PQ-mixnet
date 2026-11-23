@@ -1,0 +1,1296 @@
+%% Field-projection mix-net proofs for BGV -- draft in ACM CCS (acmart sigconf) format.
+%% Build:  latexmk -pdf main.tex
+\documentclass[sigconf,anonymous]{acmart}
+
+%% Submission settings: no copyright block, no ACM reference format.
+\setcopyright{none}
+\settopmatter{printacmref=false}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+\acmConference[Draft]{Draft}{November 2026}{}
+\acmYear{2026}
+\acmDOI{}
+\acmISBN{}
+
+\usepackage{enumitem}
+\usepackage{multirow}
+
+%% ---------------------------------------------------------------------------------------
+%% Notation
+%% ---------------------------------------------------------------------------------------
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\Zq}{\mathbb{Z}_q}
+\newcommand{\Rq}{R_q}
+\newcommand{\F}{\mathbb{F}}
+\newcommand{\cube}[1]{\{0,1\}^{#1}}
+\newcommand{\eq}{\mathsf{eq}}
+\newcommand{\Enc}{\mathsf{Enc}}
+\newcommand{\EncZ}{\mathsf{Enc}_0}
+\newcommand{\coeff}{\mathsf{coeff}}
+\newcommand{\Mpk}{M_{\mathsf{pk}}}
+\newcommand{\Rmix}{\mathcal{R}_{\mathsf{mix}}}
+\newcommand{\Rdec}{\mathcal{R}_{\mathsf{dec}}}
+\newcommand{\RS}{\mathsf{RS}}
+\newcommand{\ip}[2]{\langle #1, #2\rangle}
+\newcommand{\mle}[1]{\widetilde{#1}}
+\newcommand{\msk}[1]{#1^{\star}}
+\newcommand{\epsprox}{\varepsilon_{\mathsf{prox}}}
+\newcommand{\epsrbr}{\varepsilon_{\mathsf{rbr}}}
+\newcommand{\nq}{n_{\mathsf{q}}}
+\newcommand{\uh}{\hat{u}}
+\newcommand{\hh}{\hat{h}}
+\newcommand{\zh}{\hat{z}}
+\newcommand{\ch}{\hat{c}}
+
+
+%% Measurements of the extracted shuffle prover and verifier (scratchpad xbench, M5 Max, one core).
+\newcommand{\xbProveA}{0.30}  % 256 ballots: prover seconds per ballot (77.4 s in total)
+\newcommand{\xbVerA}{5.6}    % 256 ballots: verifier seconds in total
+\newcommand{\xbSizeA}{2.19}  % 256 ballots: proof MB (2194984 bytes)
+\begin{document}
+
+\title{Leaving the Ring: Hash-Based Proofs of Shuffle and Decryption for BGV Mix-Nets}
+
+\author{Anonymous Author(s)}
+\affiliation{\institution{Anonymous Institution}\country{}}
+
+\begin{abstract}
+A verifiable mix-net over lattice ciphertexts needs two zero-knowledge proofs. A mix server must
+prove that it permuted and re-randomised its inputs, and a decryption server must prove that it
+applied its key share correctly. The most efficient published construction, by Aranha, Baum,
+Gj{\o}steen and Silde (CCS 2023), proves the shuffle with a polynomial identity over the ciphertext
+ring $\Rq=\Zq[X]/(X^N+1)$. Bootle, Lyubashevsky and Merino-Gallardo (PKC 2025) showed that this
+argument is unsound: $\Rq$ has zero divisors and no unique factorisation.
+
+We give proofs for the same BGV mix-net relation, with the same keys and ciphertexts, that never
+test an identity over the ring. The relation is $\Zq$-linear in the coefficient vectors. The
+verifier therefore \emph{projects} every ciphertext to a single element of the field
+$\F=\mathrm{GF}(q^2)$ with a random linear form, and the shuffle becomes a statement about two
+lists of field elements. The approach is modular: after the projection, what remains is a linear
+map, a permutation and a range check over $\F$, and any commit-and-prove system for these
+relations can be used. We instantiate it with a tagged logarithmic-derivative argument, three
+masked sumchecks, and a zero-knowledge opening of a witness that is encoded with a Reed--Solomon
+code and committed with Merkle trees. The proofs are non-interactive and statistically
+zero-knowledge. They are knowledge-sound in the random-oracle model, and the proof system uses no
+lattice assumption. The Fiat--Shamir analysis goes through round-by-round soundness, which also
+covers quantum adversaries. The decryption proof contains an exact range proof for the flooding
+noise.
+
+We machine-checked the following in the Rocq prover, in about $26{,}500$ lines and with no axioms:
+the soundness theorems and honest-verifier zero knowledge of both proofs, and the correctness of
+executable verifiers and provers. For both proofs, zero knowledge holds for the executable provers
+themselves: the field elements of every proof they output form the honest transcript of the model
+for which we prove the simulator. The cited proximity lemma for Reed--Solomon codes is a
+hypothesis, and the Fiat--Shamir step is argued on paper. The shuffle prover and verifier,
+extracted to OCaml, run at full parameters. For ring degree $4096$, a $78$-bit modulus and
+$128$-bit security, they prove a shuffle of $256$ ballots in \xbProveA\,s per ballot on one core
+and verify it in \xbVerA\,s. The proof has \xbSizeA\,MB.
+\end{abstract}
+
+\begin{CCSXML}
+<ccs2012>
+ <concept>
+  <concept_id>10002978.10002979.10002981</concept_id>
+  <concept_desc>Security and privacy~Public key (asymmetric) techniques</concept_desc>
+  <concept_significance>500</concept_significance>
+ </concept>
+ <concept>
+  <concept_id>10002978.10002991.10002995</concept_id>
+  <concept_desc>Security and privacy~Privacy-preserving protocols</concept_desc>
+  <concept_significance>500</concept_significance>
+ </concept>
+ <concept>
+  <concept_id>10002978.10002979.10002980</concept_id>
+  <concept_desc>Security and privacy~Key management</concept_desc>
+  <concept_significance>100</concept_significance>
+ </concept>
+</ccs2012>
+\end{CCSXML}
+\ccsdesc[500]{Security and privacy~Public key (asymmetric) techniques}
+\ccsdesc[500]{Security and privacy~Privacy-preserving protocols}
+
+\keywords{mix-nets, proof of shuffle, verifiable decryption, BGV, post-quantum, electronic voting,
+sumcheck, interactive oracle proofs}
+
+\maketitle
+
+%% =======================================================================================
+\section{Introduction}
+%% =======================================================================================
+
+A mix-net~\cite{Chaum81} takes a list of ciphertexts and outputs a list that decrypts to the same
+plaintexts in an order that cannot be linked to the input. In electronic voting this separates
+ballots from voters. Each mix server permutes and re-randomises the list, and a set of decryption
+servers then opens the result. Every server must prove that it behaved correctly without revealing
+its permutation or its key share. For discrete-logarithm ciphertexts, such proofs have been known and
+deployed for two decades~\cite{Neff01,BG12}. Lattice ciphertexts are the candidates for ballots
+that must stay secret against quantum adversaries, and for them these proofs are still a research
+topic~\cite{CMM19,Strand18,ABGSctrsa21,FWK21,HMS21,ABGS23,BLM25}.
+
+The most efficient lattice mix-net with a published implementation is that of Aranha, Baum,
+Gj{\o}steen and Silde~\cite{ABGS23}. It uses BGV encryption~\cite{BGV12} over
+$\Rq=\Zq[X]/(X^N+1)$ together with lattice-based commitments and proofs. Bootle, Lyubashevsky and
+Merino-Gallardo~\cite{BLM25} later found that its shuffle argument, which goes back
+to~\cite{ABGSctrsa21}, is unsound. The argument tests a polynomial identity with coefficients in
+$\Rq$ and then reasons as if $\Rq$ had unique factorisation. For the moduli in use, $\Rq$ splits
+into a product of smaller rings, its CRT \emph{slots}. It therefore has zero divisors, and a
+polynomial over it can vanish at a random point without being zero. A cheating server can swap a
+single slot between two ciphertexts. The result decrypts to different votes and still satisfies
+the tested identity.
+
+\paragraph{Our approach.}
+We keep the encryption scheme, the keys and the ciphertexts of~\cite{ABGS23} and replace the two
+proofs. Our starting point is that the mix-net relation does not need the ring structure. Write
+$\EncZ(w)=(ar+pe_1,\;br+pe_2)$ for an encryption of zero under the public key $(a,b)$ with
+randomness $w=(r,e_1,e_2)$. Output $j$ of a correct shuffle is
+\[
+  \ch_j \;=\; c_{\sigma(j)} + \EncZ(w_{\sigma(j)}),
+\]
+and multiplication by the \emph{public} elements $a$ and $b$ is a linear map on coefficient vectors.
+The relation is therefore a system of linear equations over $\Zq$ in the entries of the $w_i$, plus
+two non-linear side conditions: $\sigma$ is a permutation, and the $w_i$ are short. Linear equations
+over $\Zq$ can be checked over any field that contains $\Zq$. We use $\F=\mathrm{GF}(q^2)$, which
+has about $2^{156}$ elements for the parameters of~\cite{ABGS23}, and we never test an identity over
+$\Rq$. The slot attack has no counterpart, because the argument never looks at slots.
+
+The proof combines four techniques.
+\begin{description}[leftmargin=1em,itemsep=2pt,topsep=3pt]
+\item[Field projection.] The verifier draws $\rho\in\F^{2N}$ and maps each ciphertext $c$ to
+  $\ip{\rho}{\coeff(c)}\in\F$. The projection of a re-randomised input $c_i+\EncZ(w_i)$ is a public
+  value plus the inner product of the secret $w_i$ with a public vector. A shuffle of ciphertexts
+  becomes a permutation of $\tau$ field elements, and two different ciphertexts have the same
+  projection with probability $1/|\F|$. A related compression of ring elements to field elements, by
+  evaluation at a random point, is used by Fiore, Nitulescu and Pointcheval~\cite{FNP20}.
+\item[Tagged logarithmic derivative.] We tag input $i$ with its index $i$ and output $j$ with the
+  committed value $\sigma_j$. The prover shows
+  $\sum_i 1/(z_i+\beta i-\alpha)=\sum_j 1/(\zh_j+\beta\sigma_j-\alpha)$ for random
+  $\alpha,\beta$~\cite{Hab22}. Equality of the tagged multisets forces $\sigma$ to be a
+  permutation. Unlike a grand-product argument, this reveals no value that depends on $\sigma$.
+\item[Masked sumchecks.] Three sumchecks~\cite{LFKN92} reduce the inverse relations, the linear map
+  from the witness to the projections, and the shortness condition $w^3=w$ to a few evaluations of
+  committed tables at random points. Each sumcheck is made zero-knowledge with the masking technique
+  of~\cite{CFS17,Libra}.
+\item[Hash-based commitment.] The prover commits to the witness row by row, with a Reed--Solomon code
+  and a Merkle tree over the columns, as in Ligero~\cite{AHIV17}. We give a zero-knowledge opening
+  for batches of linear claims, with two parameter regimes for the proximity
+  test~\cite{DP23,BCIKS20}.
+\end{description}
+The proof of correct partial decryption follows the same pattern. Its relation $t_i=su_i+pE_i$ is
+linear in the key share $s$ and the noise $E_i$. The bound on $E_i$ is proven exactly, with a digit
+decomposition and one more sumcheck.
+
+\paragraph{Contributions.}
+\begin{itemize}[leftmargin=1.2em,itemsep=2pt,topsep=3pt]
+\item A proof of shuffle and a proof of correct partial decryption for the BGV mix-net relation
+  of~\cite{ABGS23}, with all algebra over a field (Sections~\ref{sec:shuffle} and~\ref{sec:dec}).
+  They replace the existing proofs without changing the encryption scheme or the ciphertexts.
+\item Security proofs: knowledge soundness with an explicit error budget (Theorem~\ref{thm:sound});
+  honest-verifier zero knowledge with a simulator that is exact except for unopened hash values
+  (Theorem~\ref{thm:zk}); and a Fiat--Shamir analysis through round-by-round
+  soundness~\cite{BCS16,Hol19,CMS19} (Section~\ref{sec:fs}). Soundness is statistical in the
+  random-oracle model, and no lattice assumption enters the proof system.
+\item A mechanisation in Rocq~\cite{Rocq} (Section~\ref{sec:mech}) of knowledge soundness and
+  honest-verifier zero knowledge of both protocols, for the exact row layout of the
+  implementation, with the cited proximity lemma as the only hypothesis. It found a few unstated
+  conditions and one imprecision, and confirmed every error bound (Section~\ref{sec:findings}).
+\item Executable verifiers and provers for both proofs, written in Rocq and extracted to
+  OCaml~\cite{Letouzey02}. We prove the extracted provers complete and faithful to the
+  zero-knowledge model, and the algebraic part of the extracted verifiers sound with respect to
+  the interactive model (Section~\ref{sec:mech}).
+\end{itemize}
+
+\paragraph{Status of the claims.}
+The following results are machine-checked: Theorems~\ref{thm:sound} and~\ref{thm:dec} (soundness),
+Lemmas~\ref{lem:logder}, \ref{lem:cons} and~\ref{lem:hide}, Theorem~\ref{thm:zk}, the
+zero-knowledge part of Theorem~\ref{thm:dec}, and the extension of the line lemma in
+Appendix~\ref{app:prox}. The line lemma and the proximity gap of~\cite{BCIKS20} are cited, not
+mechanised. The machine-checked statements are about the interactive protocols, with the committed
+matrices as oracles. Merkle trees, the binding of the roots and the Fiat--Shamir transformation are
+outside the model. We prove the round-by-round analysis behind the non-interactive statement
+(Section~\ref{sec:fs}) on paper, with a state function written out message by message; its
+per-message transitions are the mechanised counts. The code is a research prototype.
+Section~\ref{sec:limits} lists the open items.
+
+%% =======================================================================================
+\section{Preliminaries}
+\label{sec:prelim}
+%% =======================================================================================
+
+\subsection{BGV and the mix-net relations}
+
+Let $N$ be a power of two, $q$ a prime with $q\equiv 1 \pmod{2N}$, $\Rq=\Zq[X]/(X^N+1)$, and $p$ a
+small plaintext modulus. For $x\in\Rq$ we write $\coeff(x)\in\Zq^N$ for its coefficient vector,
+and we extend this notation to tuples by concatenation. An element is \emph{ternary} if all its
+coefficients lie in $\{-1,0,1\}$. Following the parameter choice of~\cite{ABGS23}, our
+implementation uses $N=4096$, $p=2$ and $q=2^{78}+100663297$.
+
+A BGV public key is a pair $(a,b)\in\Rq^2$ with $b=as+pe$ for ternary $s,e$. A ciphertext is a
+pair $c=(u,v)$, and
+\[
+  \Enc(m;w)=(ar+pe_1,\; br+pe_2+m),\qquad w=(r,e_1,e_2)\ \text{ternary}.
+\]
+We write $\EncZ(w)=\Enc(0;w)$. Decryption computes $(v-su \bmod q)\bmod p$. In distributed
+decryption, each decryption server holds a share $s$ with public $b=as+pe$ and publishes
+$t_i=su_i+pE_i$ for every ciphertext, where $E_i$ is flooding noise.
+
+\begin{definition}[Shuffle relation]
+A statement consists of a public key and two lists of $\tau$ ciphertexts,
+$x=(a,b,(c_i)_{i<\tau},(\ch_j)_{j<\tau})$. A witness is a permutation $\sigma$ of
+$\{0,\dots,\tau-1\}$ together with ternary elements $w_0,\dots,w_{\tau-1}$ of $\Rq^3$ such that
+$\ch_j=c_{\sigma(j)}+\EncZ(w_{\sigma(j)})$ for all $j$. We write $\Rmix$ for this relation.
+\end{definition}
+
+\begin{definition}[Decryption relation]
+A statement consists of $a,b\in\Rq$ and of elements $u_i,t_i\in\Rq$ for $i<\tau$. A witness is a
+pair of ternary $s,e\in\Rq$ and elements $E_i\in\Rq$ with integer coefficients in $[-B/2,B/2)$
+such that
+\[
+  \text{(K)}\;\; b=as+pe \qquad\text{and}\qquad \text{(D)}\;\; t_i=su_i+pE_i \;\;\text{for all } i .
+\]
+We write $\Rdec$ for this relation.
+\end{definition}
+
+\paragraph{The linear form.}
+Since $a$ and $b$ are public, there is a public matrix $\Mpk\in\Zq^{2N\times 3N}$ with
+\begin{equation}\label{eq:linear}
+  \coeff(\EncZ(w)) \;=\; \Mpk\,\coeff(w)\qquad\text{for all } w\in\Rq^3 .
+\end{equation}
+Its blocks are the negacyclic multiplication matrices of $a$ and $b$ and multiples of the identity.
+Equation~\eqref{eq:linear} is the only property of $\Rq$ that our proofs use.
+
+\subsection{Field, tables and multilinear extensions}
+
+Let $\F=\Zq[t]/(t^2-3)$. This is a field with $q^2\approx 2^{156}$ elements, because $3$ is not a
+square modulo our $q$. All verifier challenges are elements of $\F$. Committed data are elements of
+$\Zq\subset\F$, and a committed $\F$-element is stored as two $\Zq$-elements.
+
+A \emph{table} $T$ of length $2^m$ is a function on $\cube{m}$; variable $0$ is the least
+significant bit of the index. Its multilinear extension is
+$\mle{T}(x)=\sum_{b\in\cube{m}}T(b)\,\eq(b,x)$, where
+$\eq(t,x)=\prod_i\bigl(t_ix_i+(1-t_i)(1-x_i)\bigr)$. Let $Z(x)=\prod_i x_i(1-x_i)$, which vanishes on
+$\cube{m}$. For a uniformly random \emph{mask coefficient} $a_T\in\F$, the \emph{masked extension}
+\[
+  \msk{T}(x)=\mle{T}(x)+a_T\,Z(x)
+\]
+agrees with $T$ on the cube, and $\msk{T}(r)$ is uniform in $\F$ at every point $r$ with
+$Z(r)\ne 0$.
+
+We write the witness of $\Rmix$ as three tables $W_r,W_{e_1},W_{e_2}$ of length $\tau N$, with
+coefficient $y$ of ballot $i$ at index $y+Ni$, and a table $\sigma$ of length $\tau$. We assume that
+$\tau$ is a power of two and set $\ell=\log\tau$ and $m=\ell+\log N$.
+
+\subsection{Sumcheck}
+
+The sumcheck protocol~\cite{LFKN92} reduces a claim $\sum_{x\in\cube{m}}g(x)=S$ to one evaluation of
+$g$ at a random point. In round $j$ the prover fixes the first $j-1$ variables to the challenges,
+sums over the remaining ones, and sends the resulting univariate polynomial. The verifier checks
+that its values at $0$ and $1$ add up to the running claim and replies with a random $r_j\in\F$.
+If $g$ has degree $d_j$ in variable $j$, a false claim survives with probability at most
+$\sum_j d_j/|\F|$. Our prover sends the values at $0,2,\dots,d_j$; the value at $1$ follows from the
+running claim.
+
+To hide the round messages, the prover adds a random polynomial to the
+summand~\cite{CFS17,Libra}. The mask is a sum of univariate polynomials,
+\[
+  g(x)=a_0+\sum_{j}\sum_{t=1}^{d_j}c_{j,t}\,x_j^{\,t},
+\]
+and the prover commits to its coefficients together with its sum $G$ over the cube. The verifier
+sends a random $\rho\in\F$, and the parties run the sumcheck on $f+\rho g$ with claim $S+\rho G$.
+
+\subsection{Proof models}
+
+We first analyse the protocols as interactive oracle proofs~\cite{BCS16}: the long messages of the
+prover are oracles, and the verifier is public-coin. The BCS transformation~\cite{BCS16} replaces
+oracles by Merkle roots and challenges by hashes of the transcript. Its soundness in the
+random-oracle model is governed by round-by-round soundness~\cite{Hol19}, and the same quantity
+bounds soundness against quantum adversaries~\cite{CMS19}.
+
+%% =======================================================================================
+\section{Technical overview}
+\label{sec:overview}
+%% =======================================================================================
+
+\paragraph{Why not the ring.}
+A proof of shuffle in the style of Neff~\cite{Neff01} shows that two lists are equal as multisets by
+comparing $\prod_i(x_i-\alpha)$ and $\prod_j(\hat{x}_j-\alpha)$ at a random $\alpha$. Over a field,
+two different polynomials of degree $\tau$ agree on at most $\tau$ points. Over $\Rq$ this fails.
+For $q\equiv 1\pmod{2N}$ the ring is isomorphic to $\Zq^N$, and the comparison happens slot by slot,
+so the two products can agree in every slot although the lists differ. Swapping one slot between
+two output ciphertexts changes both plaintexts but leaves every slot-wise multiset unchanged. Our
+extracted verifier rejects statements modified in this way (Section~\ref{sec:eval}).
+
+\paragraph{Projection.}
+We want an identity test over a field. By~\eqref{eq:linear}, the re-randomised input
+$c_i+\EncZ(w_i)$ has coefficient vector $\coeff(c_i)+\Mpk\coeff(w_i)$. For a random
+$\rho=(\rho_u,\rho_v)\in\F^{2N}$ define
+\begin{align*}
+  z_i &= \ip{\rho}{\coeff(c_i)}+\ip{\rho'}{\coeff(w_i)}, & \rho' &=\rho\,\Mpk\in\F^{3N},\\
+  \zh_j &= \ip{\rho}{\coeff(\ch_j)} .
+\end{align*}
+The verifier computes $\rho'$, the public parts of the $z_i$, and all $\zh_j$ by itself. Two
+distinct vectors in $\Zq^{2N}$ have the same projection with probability $1/|\F|$. With
+overwhelming probability, the shuffle relation therefore holds exactly when $\zh_j=z_{\sigma(j)}$
+for all $j$. The projection mixes all coefficients, and hence all slots, into one field element.
+
+\paragraph{Permutation without leakage.}
+To show that $(\zh_j)$ is $(z_i)$ reordered by a \emph{permutation}, we attach tags. Let
+\[
+  h_i=z_i+\beta i-\alpha,\qquad \hh_j=\zh_j+\beta\sigma_j-\alpha ,
+\]
+for random $\alpha,\beta\in\F$, where $\sigma_j$ is the committed table. If
+$\sum_i 1/h_i=\sum_j 1/\hh_j$, then with high probability the multiset of pairs $(z_i,i)$ equals
+the multiset of pairs $(\zh_j,\sigma_j)$ (Lemma~\ref{lem:logder}). The tags on the left are
+$0,\dots,\tau-1$, each exactly once, so $\sigma$ is a bijection and $\zh_j=z_{\sigma(j)}$. The
+prover commits to the inverses $u=1/h$ and $\uh=1/\hh$ and proves $u\cdot h=1$, $\uh\cdot\hh=1$ and
+$\sum u=\sum\uh$. An earlier version of our design compared products and sent their common value in
+the clear. That value is a function of the secret permutation, and with two ballots it reveals the
+permutation. In the logarithmic-derivative form, the prover sends only masked evaluations.
+
+\paragraph{Three sumchecks and one opening.}
+Sumcheck~A proves the three facts about $u$ and $\uh$. It ends with claimed evaluations of
+$\msk{u},\msk{\uh},\msk{\sigma}$ and $\msk{h}$ at a point $r\in\F^{\ell}$. The prover never commits to
+the table $h$: it is a linear image of the committed $W$, and sumcheck~B reduces the claimed value
+$\msk{h}(r)$ to one linear claim about $W$. Sumcheck~C proves $w^3-w=0$ for all $3\tau N$ entries of
+$W$, which over $\Zq$ with $q>3$ means $w\in\{-1,0,1\}$. What remains are nine linear claims about
+committed rows, and one batched opening settles them.
+
+\paragraph{Cost.}
+The sumcheck part of a proof takes a few kilobytes. The opening dominates the size: it sends a
+constant number of row combinations and $\nq\approx 190$ to $310$ columns of each committed matrix.
+Splitting a table of $3\tau N$ symbols into rows of $C$ symbols gives $3\tau N/C$ rows, so the size
+is $O(C+\nq\,\tau N/C)$ field elements, with minimum $O(\sqrt{\nq\,\tau N})$. The proof size per
+ballot therefore shrinks as the number of ballots grows.
+
+\paragraph{A general template.}
+The projection is the only step that uses the ring. After it, the prover must show a statement over
+a field: committed vectors $W$ with entries in $\Zq$ and a committed table $\sigma$ such that, for
+the verifier's $\rho$ drawn after the commitment, the values
+$z_i=\ip{\rho}{\coeff(c_i)}+\ip{\rho'}{\coeff(w_i)}$ are the public $\zh_j$ reordered by $\sigma$, and
+every entry of $W$ lies in $\{-1,0,1\}$. These are a linear map, a permutation and a range check, and
+any commit-and-prove system for them can replace our choices in steps 2 to 4. The permutation can
+also be shown by a grand-product argument~\cite{Neff01}, provided its value stays masked, since the
+product itself reveals $\sigma$. The reduction to evaluations can use univariate quotient checks
+instead of multilinear sumchecks, as long as the commitment matches. The commitment can be a
+polynomial commitment with polylogarithmic openings, such as BaseFold~\cite{BaseFold}, which would
+make the proof much smaller than our $O(\sqrt{\nq\,\tau N})$ opening, or a lattice-based
+one~\cite{LaBRADOR,NS24}, at the price of computational soundness. Three constraints apply to every
+choice. The witness must be committed before $\rho$, $\alpha$ and $\beta$ are drawn. The data live in
+$\Zq$ while the challenges need a larger field such as $\mathrm{GF}(q^2)$, so a system tied to a
+different field would have to emulate arithmetic modulo $q$. And keeping the proof system free of
+lattice assumptions rules out pairing-based and discrete-logarithm components. Our components are
+hash-based and work over $\Zq$ directly. The security argument is modular in the same way, but the
+mechanisation of Section~\ref{sec:mech} covers this instantiation only.
+
+\paragraph{Other encryption schemes.}
+The proofs use three properties of BGV. Re-randomisation adds an encryption of zero that is a
+public linear map of the randomness, which is~\eqref{eq:linear}. The randomness is short in a way
+that a low-degree check per coefficient can express. And the modulus $q$ is prime, so that $\Zq$
+lies in a field from which the challenges are drawn. The ring enters only through the matrix
+$\Mpk$: it need not split, and it need not be cyclotomic. Other schemes with these properties fit
+the same template. BFV~\cite{FV12} has the ciphertext structure of BGV. For encryption from plain
+or module LWE~\cite{Regev05}, without ciphertext compression, the public key is a matrix and
+$\Mpk$ is built from it directly. Randomness from a wider range needs a check of higher degree or
+the digit decomposition of Section~\ref{sec:dec}. Some cases need more than a change of
+parameters. A composite or power-of-two modulus gives no field. A small prime modulus calls for a
+challenge field of high extension degree and for a different row code, since $\Zq$ has too few
+evaluation points. Rounding, as in ciphertext compression, is not linear and would need a range
+proof for the rounding error. We work out and mechanise the BGV case only.
+
+%% =======================================================================================
+\section{Commitment and zero-knowledge opening}
+\label{sec:pcs}
+%% =======================================================================================
+
+\subsection{Row code and commitment}
+
+A row holds $C$ data symbols of $\Zq$ followed by $\nq$ uniformly random \emph{pads}. The
+$k=C+\nq$ symbols are the coefficients of a polynomial, and the codeword is the list of its values
+at the $n$-th roots of unity in $\Zq$. This is a Reed--Solomon code with distance $d=n-k+1$. The
+length is $n=C/\varrho$ for a nominal rate $\varrho\in\{1/4,1/2\}$, and it is doubled if the pads
+would push the actual rate above $2\varrho$. Fix a divisor $\Delta\in\{3,2\}$, the \emph{proximity
+regime}, and let
+\[
+  e=\lfloor (d-1)/\Delta\rfloor,\qquad
+  \nq=\min\{\,t : (1-e/n)^{t}\le 2^{-\lambda}\,\},
+\]
+with $\lambda=128$. A batch of rows forms a matrix. Leaf $j$ of its Merkle tree is the SHA-256 hash
+of a fresh $16$-byte salt and column $j$, and the commitment is the root. A matrix may be committed
+in several batches, each with its own root.
+
+\subsection{Linear claims and the opening protocol}
+
+A \emph{claim} is an equation $\sum_{t}\mathit{coef}_t\cdot\ip{\mathit{row}_t}{L_t}=\mathit{value}$
+that relates committed rows, public vectors $L_t\in\F^{C}$ and a value in $\F$. An evaluation of a
+multilinear extension at a point has this form: if the table is split into rows, $L$ is the $\eq$
+vector of the low variables, and the coefficients are the $\eq$ values of the high variables. Rows
+that are paired with the same vector $L$ form a \emph{slot} $v$ with vector $L_v$. Slots come in two
+kinds. A \emph{tensor} slot has one fixed vector $L_v$ and many rows, as for a table split into rows.
+A \emph{functional} slot has one row and, for each claim $i$, its own vector $L_{v,i}$; after
+batching, its vector is $L_v=\sum_i\kappa_i\,\mathit{coef}_{i}\,L_{v,i}$. Functional slots read
+single entries or short combinations of one row, for instance a mask coefficient in the mask table
+or the value of a sumcheck mask at a point. For every slot the prover has committed to a uniformly
+random mask row $m_v\in\F^{k}$, and for every matrix to one more mask row $m_{\mathsf{prox}}$. A mask
+row over $\F$ is stored as two rows over $\Zq$, one per coordinate.
+
+\begin{enumerate}[leftmargin=1.5em,itemsep=1pt,topsep=3pt]
+\item The verifier sends $\kappa_i\in\F$ for every claim $i$. This defines, for each slot,
+  $u_v=\sum_i\kappa_i\sum_{t\in v}\mathit{coef}_{i,t}\,\mathit{row}_{i,t}$ and the batched value
+  $V=\sum_i\kappa_i\,\mathit{value}_i$.
+\item The prover sends $\mu=\sum_v\ip{m_v}{L_v}$.
+\item The verifier sends $c\in\F$, and $\gamma_i\in\F$ for every row $i$ of every matrix.
+\item The prover sends $\bar u_v=m_v+c\,u_v$ for every slot, with all $k$ coordinates, and
+  $p=m_{\mathsf{prox}}+\sum_i\gamma_i\,\mathit{row}_i$ for every matrix.
+\item The verifier checks $\sum_v\ip{\bar u_v}{L_v}=\mu+cV$, where the inner product uses the first
+  $C$ coordinates.
+\item The verifier sends $\nq$ distinct column indices per matrix, and the prover opens these
+  columns with their salts and Merkle paths.
+\item For every opened column $j$, the verifier encodes $\bar u_v$ and $p$ and checks that their
+  $j$-th symbols equal the same combinations of the opened entries:
+  \begin{align*}
+   \RS(\bar u_v)[j]&=\mathrm{col}_j[m_v]+c\sum_i\kappa_i\sum_{t\in v}\mathit{coef}_{i,t}\,\mathrm{col}_j[\mathit{row}_{i,t}],\\
+   \RS(p)[j]&=\mathrm{col}_j[m_{\mathsf{prox}}]+\sum_i\gamma_i\,\mathrm{col}_j[i],
+  \end{align*}
+  where $\RS(\cdot)$ is the encoding map and $\mathrm{col}_j[\cdot]$ is the opened entry of a row.
+\end{enumerate}
+
+\subsection{Properties}
+
+\begin{lemma}[Binding]\label{lem:bind}
+In the random-oracle model, a Merkle root fixes at most one value per leaf, except with probability
+$t^2/2^{256}$ for $t$ oracle queries~\cite{BCS16}.
+\end{lemma}
+
+\begin{lemma}[Proximity]\label{lem:prox}
+Let $M$ be the rows of a matrix other than $m_{\mathsf{prox}}$. Suppose there is no set of $n-e$
+columns on which every row of $M$ agrees with a codeword. Then for every $m_{\mathsf{prox}}$, the
+combination $p_\gamma=m_{\mathsf{prox}}+\sum_i\gamma_i\,\mathit{row}_i$ satisfies
+\[
+  \Pr_{\gamma}\bigl[\,p_\gamma \text{ is within distance } e \text{ of the code over } \F\,\bigr]\le\epsprox ,
+\]
+where $\epsprox=(e+2)/|\F|$ for $\Delta=3$ and $\epsprox=n/|\F|$ for $\Delta=2$.
+\end{lemma}
+
+For $\Delta=2$, this is the proximity gap for Reed--Solomon codes at the unique-decoding radius,
+with correlated agreement over affine spaces~\cite[Thm.~1.6]{BCIKS20}. For $\Delta=3$, it needs
+only an elementary statement about lines that holds for every linear code and is attributed to Roth
+and Z\'emor~\cite{AHIV17}. We use it as stated in~\cite[Thm.~2.1]{DP23} and extend it from lines to
+affine spaces in Appendix~\ref{app:prox}. Rows are committed over $\Zq$ and tested over $\F$. A row
+over $\Zq$ that agrees with an $\F$-codeword on more than $k$ columns agrees there with a
+$\Zq$-codeword, namely the $\Zq$-component of the $\F$-codeword. The choice of regime trades
+assumptions for size: $\Delta=3$ rests on the elementary lemma, while $\Delta=2$ needs fewer queries
+and relies on the deeper theorem.
+
+Soundness does not need this remark about the base field. The mechanised proof of
+Theorem~\ref{thm:sound} decodes the committed rows over $\F$ and extracts a witness over $\F$. The
+shortness sumcheck then shows $w^3=w$, which forces every entry into $\{-1,0,1\}$, and the
+multiset step forces $\sigma$ to be a permutation. No step of the argument uses that the decoded
+entries lie in $\Zq$.
+
+\begin{lemma}[Consistency]\label{lem:cons}
+Suppose the rows of $M$ agree with codewords outside a set of at most $e$ columns, and some
+$\bar u_v$ differs from $m_v+c\,u_v$ computed on the decoded rows. Then a uniformly random column
+passes the check of step~7 with probability at most $1-(d-e)/n$.
+\end{lemma}
+\begin{proof}
+The encoding of $\bar u_v$ and the decoded combination are distinct codewords, so they differ in at
+least $d$ columns. At most $e$ of these columns are ones where the committed rows differ from their
+decodings.
+\end{proof}
+
+\begin{lemma}[Hiding]\label{lem:hide}
+For every set $J$ of at most $\nq$ columns, the entries of a row at $J$ are uniform and independent
+of its data symbols. More precisely, for $|J|=\nq$ distinct columns, the map from the $\nq$ pads to
+the entries at $J$ is a bijection, whatever the data symbols.
+\end{lemma}
+\begin{proof}
+For pads $\pi_t$, the symbol at column $j$ is the data part plus
+$\omega^{jC}\sum_{t<\nq}\pi_t\,\omega^{jt}$. Restricted to $J$, this is an invertible diagonal matrix
+times a Vandermonde matrix with distinct nodes, applied to uniform pads.
+\end{proof}
+
+Lemmas~\ref{lem:cons} and~\ref{lem:hide} are machine-checked, and so is the soundness of the
+opening as a whole, for two matrices and both kinds of slot. If a claimed value is not the value of
+its claim on the decoded rows, then the value check and all column checks pass for at most the
+fraction of challenges given by the last four lines of Table~\ref{tab:budget}. One detail is sharper
+than a union bound over the matrices. For fixed earlier challenges, the queries need to catch at
+most one matrix, so the query term is the larger of the two matrices' terms rather than their sum.
+
+%% =======================================================================================
+\section{The shuffle proof}
+\label{sec:shuffle}
+%% =======================================================================================
+
+\subsection{Protocol}
+
+The prover commits to two matrices. The \emph{big} matrix holds $W_r,W_{e_1},W_{e_2}$ in rows of
+$C_1$ symbols, plus three mask rows over $\F$. The \emph{small} matrix has rows of $C_2$ symbols and
+is committed in two batches: first $\sigma$ and three mask rows, then, after the first challenges,
+$u$, $\uh$ and one row that holds the \emph{mask table}. The mask table contains the mask
+coefficients $a_u,a_{\uh},a_\sigma,a_h,a_{w_1},a_{w_2},a_{w_3}$ and the coefficients of the three
+sumcheck masks $g_A,g_B,g_C$. Figure~\ref{fig:mix} gives the protocol.
+
+\begin{figure*}[t]
+\small
+\fbox{\begin{minipage}{0.975\textwidth}
+\textbf{Statement} $x=(a,b,(c_i),(\ch_j))$.\quad \textbf{Witness} $\sigma$, $W=(W_r,W_{e_1},W_{e_2})$.
+\begin{enumerate}[leftmargin=1.6em,itemsep=2pt,topsep=3pt]
+\item[\textbf{1.}] $P$ commits $W$ (big matrix) and $\sigma$ (small matrix, batch 1), each with its mask
+  rows, and sends the two roots.
+\item[\textbf{2.}] $V$ sends $\rho=(\rho_u,\rho_v)\in\F^{2N}$ and $\alpha,\beta\in\F$. Both compute
+  $\rho'=\rho\,\Mpk$, $z^{\mathsf{pub}}_i=\ip{\rho}{\coeff(c_i)}$ and $\zh_j=\ip{\rho}{\coeff(\ch_j)}$.
+  $P$ computes
+  \[ z_i=z^{\mathsf{pub}}_i+\ip{\rho'}{\coeff(w_i)},\qquad h_i=z_i+\beta i-\alpha,\qquad
+     \hh_j=\zh_j+\beta\sigma_j-\alpha,\qquad u_i=1/h_i,\qquad \uh_j=1/\hh_j . \]
+\item[\textbf{3.}] $P$ commits $u$, $\uh$ and the mask table (small matrix, batch 2) and sends the
+  root and the sums $G_A,G_B,G_C$ of $g_A,g_B,g_C$ over their cubes.
+\item[\textbf{4.}] \emph{Sumcheck A} (permutation; $\ell$ variables, degree $3$, last round $5$).
+  $V$ sends $t_c\in\F^{\ell}$, $k_1,k_2,k_3,\rho_A\in\F$. The parties run a sumcheck for
+  \[ \sum_{x\in\cube{\ell}}\Bigl[\eq(t_c,x)\bigl(k_1\,\msk{u}\msk{h}+k_2\,\msk{\uh}\msk{\hh}\bigr)
+       +k_3\bigl(\msk{u}-\msk{\uh}\bigr)+\rho_A\,g_A\Bigr](x)\;=\;k_1+k_2+\rho_A G_A ,
+     \qquad \msk{\hh}(x)=\mle{\zh}(x)+\beta\,\msk{\sigma}(x)-\alpha . \]
+  It ends at a point $r$. $P$ sends
+  $(U,\hat U,s,H)=(\msk{u},\msk{\uh},\msk{\sigma},\msk{h})(r)$. $V$ evaluates the bracket without
+  the mask term at $r$ from these four values, and derives the value $\gamma_A$ that $g_A(r)$ must
+  take for the final check to hold.
+\item[\textbf{5.}] \emph{Sumcheck B} (linearisation; $\log N$ variables, degree $2$). $V$ sends
+  $\rho_B$. The parties run a sumcheck over $y\in\cube{\log N}$ for
+  \[ \sum_{y}\Bigl[\,\sum_{k=1}^{3}\rho'_k(y)\,\mle{W}_k(y,r)+\frac{a_h Z(r)}{N}+\rho_B\,g_B(y)\Bigr]
+     \;=\;H-\mle{z^{\mathsf{pub}}}(r)-\beta\,\mathrm{id}(r)+\alpha+\rho_B G_B ,
+     \qquad \mathrm{id}(r)=\textstyle\sum_{i<\ell}2^i r_i . \]
+  It ends at a point $r_y$ with final claim $\mathit{cl}_B$.
+\item[\textbf{6.}] \emph{Sumcheck C} (shortness; $m$ variables, degree $4$, last round $7$). $V$ sends
+  $t_z\in\F^{m}$, $k^C_1,k^C_2,k^C_3,\rho_C\in\F$. The parties run a sumcheck for
+  \[ \sum_{x\in\cube{m}}\Bigl[\eq(t_z,x)\sum_{k=1}^{3}k^C_k\bigl((\msk{w}_k)^{3}-\msk{w}_k\bigr)
+       +\rho_C\,g_C\Bigr](x)\;=\;\rho_C G_C . \]
+  It ends at a point $r_z$. $P$ sends $\msk{w}_k(r_z)$ for $k=1,2,3$, and $V$ derives the value
+  $\gamma_C$ that $g_C(r_z)$ must take.
+\item[\textbf{7.}] \emph{Opening.} The protocol of Section~\ref{sec:pcs} is run for nine linear
+  claims: the values $U$, $\hat U$, $s$; the final claim $\mathit{cl}_B$, which is a combination
+  of $\mle{W}_k(r_y,r)$, $a_h$ and the coefficients of $g_B$; the three values $\msk{w}_k(r_z)$;
+  $g_A(r)=\gamma_A$; and $g_C(r_z)=\gamma_C$.
+\end{enumerate}
+\end{minipage}}
+\caption{The shuffle proof as a public-coin interactive protocol. In the non-interactive proof
+every verifier message is a hash of the parameters, the statement and all prover messages so
+far.}
+\label{fig:mix}
+\Description{A boxed list of the seven steps of the shuffle protocol: two commitment rounds,
+three sumchecks and the opening.}
+\end{figure*}
+
+We comment on three points of the protocol.
+
+\emph{Degrees.} The masked extensions have degree $2$ in each variable, but $Z$ vanishes as soon as
+one variable is Boolean. In every round except the last, the mask terms therefore contribute
+nothing to the round polynomial, and the degree is that of the unmasked summand: $3$ for
+sumcheck~A and $4$ for sumcheck~C. Only the last rounds have degree $5$ and $7$.
+
+\emph{Sumcheck B.} By the definitions of $h$ and of the masked extension,
+\[
+  \msk{h}(r)=\mle{z^{\mathsf{pub}}}(r)+\sum_{y}\sum_{k}\rho'_k(y)\,\mle{W}_k(y,r)
+            +\beta\,\mathrm{id}(r)-\alpha+a_hZ(r),
+\]
+where $\mle{W}_k(y,r)$ is the extension of $W_k$ in the ballot index, evaluated at $r$ and viewed as
+a table in the coefficient index $y$. The claim of sumcheck~B is this equation solved for the sum,
+with the constant $a_hZ(r)$ spread over the $N$ points of the cube.
+
+\emph{The verifier's linear algebra.} Let $A$ and $B$ be the negacyclic multiplication matrices of
+$a$ and $b$. Since $\ip{\rho_u}{\coeff(ar)}=\ip{A^{\!\top}\rho_u}{\coeff(r)}$, the three blocks of
+$\rho'$ are
+\[
+  \rho'_1=A^{\!\top}\rho_u+B^{\top}\rho_v,\qquad \rho'_2=p\,\rho_u,\qquad \rho'_3=p\,\rho_v .
+\]
+For the projections, the verifier needs two adjoint multiplications and $4\tau N$ multiplications of
+a $\Zq$-element by an $\F$-element. This is linear in the size of the statement.
+
+\subsection{The multiset lemma}
+
+\begin{lemma}[Logarithmic derivative with projection]\label{lem:logder}
+Let $S,T$ be multisets of $\tau<q$ elements of $\Zq^{2N}\times\Zq$. If $S\ne T$, then
+\[
+  \sum_{(x,y)\in S}\frac{1}{\ip{\rho}{x}+\beta y-\alpha}
+  =\sum_{(x,y)\in T}\frac{1}{\ip{\rho}{x}+\beta y-\alpha}
+\]
+holds, with all denominators non-zero, with probability at most $(2\tau-1)/|\F|$ over uniform
+$\rho\in\F^{2N}$ and $\alpha,\beta\in\F$.
+\end{lemma}
+\begin{proof}
+Each distinct pair $(x,y)$ defines the linear form $\ip{R}{x}+By-A$ in the variables $(R,B,A)$.
+Distinct pairs give distinct forms, and since every form has coefficient $-1$ at $A$, the forms are
+pairwise coprime. Some pair has a net multiplicity $\mu\ne 0$ between $S$ and $T$. Since
+$|\mu|\le\tau<q$, this multiplicity is non-zero in $\F$. Multiply the difference of the two sums by
+the product of the $D\le 2\tau$ distinct forms. The result is a polynomial of degree at most $D-1$.
+Modulo the form of the chosen pair, it equals $\mu$ times the product of the other forms, which is
+non-zero. The polynomial is therefore non-zero, and the claim follows from the Schwartz--Zippel
+lemma~\cite{Schwartz80,Zippel79}.
+\end{proof}
+
+The mechanised proof avoids multivariate polynomials. The numerator is homogeneous of degree
+$D-1$, so on every line in a direction where it does not vanish, it is a univariate polynomial of
+that degree. Averaging over the translates of the line gives the same bound. The mechanised
+statement is slightly more general: the forms may have coefficients in $\F$, not only in $\Zq$. The
+condition $\tau<q$ appears as ``$1,\dots,\tau$ are non-zero in $\F$''.
+
+\subsection{Knowledge soundness}
+
+\begin{theorem}[Knowledge soundness, interactive]\label{thm:sound}
+Consider the protocol of Figure~\ref{fig:mix} with the matrices as oracles, and let $\tau<q$.
+Decode every committed row, at the time its batch is committed, to the unique codeword within
+distance $e$ if there is one. If the decoded $(\sigma,W)$ is not a witness for the statement, the
+verifier accepts with probability at most
+\[
+  \frac{2\tau+9\ell+7\log N+9}{|\F|}\;+\;2\,\epsprox\;+\;\Bigl(1-\frac{e}{n}\Bigr)^{\nq}.
+\]
+\end{theorem}
+
+Table~\ref{tab:budget} lists, for each verifier message, the event that lets a false claim survive
+that message. The bound of the theorem is the sum of the table.
+
+\begin{table}[t]
+\caption{Error budget of Theorem~\ref{thm:sound}.}
+\label{tab:budget}
+\small
+\begin{tabular}{@{}p{0.56\columnwidth}ll@{}}
+\toprule
+Event & Probability & Message\\
+\midrule
+log-derivative identity holds for two different multisets & $(2\tau-1)/|\F|$ & $\rho,\alpha,\beta$\\
+claim of A true although an inverse or the sum is wrong & $(\ell+1)/|\F|$ & $t_c,k,\rho_A$\\
+sumcheck A accepts a false claim & $(3\ell+2)/|\F|$ & rounds of A\\
+$H$ wrong although the claim of B is true & $1/|\F|$ & $\rho_B$\\
+sumcheck B accepts a false claim & $2\log N/|\F|$ & rounds of B\\
+claim of C true although $W$ is not ternary & $(m+1)/|\F|$ & $t_z,k^C,\rho_C$\\
+sumcheck C accepts a false claim & $(4m+3)/|\F|$ & rounds of C\\
+a false claim disappears in the batch & $1/|\F|$ & $\kappa$\\
+opening equation holds for a wrong $V$ & $1/|\F|$ & $c$\\
+a far matrix yields a close combination & $\epsprox$ per matrix & $\gamma$\\
+all column queries miss & $(1-e/n)^{\nq}$ & columns\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{proof}
+Assume that the verifier accepts and that none of the events of Table~\ref{tab:budget} occurs. We go
+backwards through the protocol.
+
+\emph{Opening.} Suppose a matrix had no decoding with at most $e$ bad columns. By
+Lemma~\ref{lem:prox} the combination $p$ would be far from the code, so the vector sent would differ
+from the committed combination on more than $e$ columns, and a query would hit one of them. Hence
+both matrices decode. By Lemma~\ref{lem:cons}, every $\bar u_v$ equals $m_v+c\,u_v$ on the decoded
+rows. The check of step~5 then reads $\mu'+cV'=\mu+cV$, where $\mu'$ and $V'$ are computed from the
+decoded rows and are fixed before $c$ is drawn. Hence $V'=V$. Since the batching did not hide a
+false claim, all nine claims hold for the decoded rows.
+
+\emph{Sumcheck B.} The fourth claim fixes the final value of B to the true summand at $r_y$, so the
+claimed sum is the true sum:
+$(\msk{h}(r)-H)+\rho_B(G_B'-G_B)=0$, where $G_B'$ is the true sum of the committed $g_B$ and both
+differences are fixed before $\rho_B$ is drawn. Hence $H=\msk{h}(r)$.
+
+\emph{Sumcheck A.} Since $U,\hat U,s,H$ and $g_A(r)$ are correct, the final check of A evaluates the
+true summand at $r$, so the claimed sum is true. Since $\sum_x\eq(t_c,x)=1$, the claim says that
+$\sum_x\eq(t_c,x)\bigl[k_1(u h-1)+k_2(\uh\hh-1)\bigr](x)+k_3\sum_x(u-\uh)(x)$ vanishes. For random
+$t_c,k_1,k_2,k_3$ this means $uh=1$ and $\uh\hh=1$ on the cube, and $\sum u=\sum\uh$. In other words,
+\[
+  \sum_i\frac{1}{z_i+\beta i-\alpha}=\sum_j\frac{1}{\zh_j+\beta\sigma_j-\alpha}
+\]
+with no vanishing denominator.
+
+\emph{Multisets.} By Lemma~\ref{lem:logder}, the multiset of the pairs
+$(\coeff(c_i)+\Mpk\coeff(w_i),\,i)$ equals the multiset of the pairs $(\coeff(\ch_j),\,\sigma_j)$. The
+tags on the left are $0,\dots,\tau-1$, each exactly once, and they are distinct in $\Zq$ because
+$\tau<q$. So $\sigma$ is a permutation and $\ch_j=c_{\sigma(j)}+\EncZ(w_{\sigma(j)})$.
+
+\emph{Sumcheck C.} As for A, we get $w^3=w$ for every entry of $W$, so every entry is in
+$\{-1,0,1\}$.
+\end{proof}
+
+The extractor is straight-line. It reads the committed leaves off the prover's oracle queries and
+runs Reed--Solomon decoding on the first message.
+
+\paragraph{The mechanised statement.}
+Theorem~\ref{thm:sound} is machine-checked for the protocol as implemented, including the row layout
+of both matrices and the verifier's computation of its public values. The bound is stated as a
+count of accepting challenge tuples, for a prover that may choose every message after the
+commitments adaptively; rows of the second batch may depend on the first challenge. The count splits
+as in Table~\ref{tab:budget}. The sumcheck layer contributes
+$2\tau+4\ell+2\log N+5m+7=2\tau+9\ell+7\log N+7$ over $|\F|$. The two opening lines for $\kappa$ and
+$c$ add $2$, which gives the numerator of the theorem and confirms the paper's arithmetic. The
+hypotheses are those of the theorem plus one proximity statement per matrix (Lemma~\ref{lem:prox},
+cited), the Reed--Solomon parameters ($k\le n$, distinct evaluation points, $2e<d$), and three
+conditions on the field: $1,\dots,\tau$, $N$ and $2$ are non-zero. They hold for $\tau,N<q$ and odd
+$q$. The mask argument needs $2\ne 0$, which was not stated before. On the other hand, soundness
+does not need $\rho_A,\rho_C\ne 0$. Stated without division, as
+$\rho_A\,g_A(r)=\mathit{cl}_A-(\ldots)$, the claims on the masks remain sound when $\rho_A=0$. The
+verifier needs $\rho_A,\rho_C\ne 0$ only in order to divide, and it rejects otherwise.
+
+\subsection{Zero knowledge}\label{sec:zk}
+
+We call a challenge vector \emph{good} if no $h_i$ or $\hh_j$ is zero, $Z(r)\ne 0$, $Z(r_z)\ne 0$
+and $\rho_A,\rho_B,\rho_C\ne 0$. Challenges are bad with probability at most
+$(2\tau+2\ell+2m+3)/|\F|$.
+
+\begin{theorem}[Honest-verifier zero knowledge]\label{thm:zk}
+There is a simulator that, given a statement in the language and good challenges, outputs a
+transcript in which every value other than the hashes of unopened leaves has exactly the
+distribution of a real transcript. The hashes differ from real ones with probability at most
+$t/2^{128}$ for a distinguisher with $t$ oracle queries.
+\end{theorem}
+
+\paragraph{Simulator.}
+(1)~Draw $U,\hat U,s,H$ and $\msk{w}_k(r_z)$ uniformly. (2)~Draw $G_A,G_B,G_C$ uniformly, and draw
+every sumcheck round message uniformly among those consistent with the running claim. (3)~Derive
+$\mathit{cl}_B$, $\gamma_A$, $\gamma_C$ and the batched value $V$ with the verifier's formulas.
+(4)~Draw all $\bar u_v$ and $p$ uniformly and set $\mu=\sum_v\ip{\bar u_v}{L_v}-cV$. (5)~In the
+opened columns, draw the entries of data rows uniformly and solve for the entries of the mask rows
+from the checks of step~7. (6)~Choose salts, fill the unopened leaves with random hashes and build
+the trees.
+
+\begin{proof}
+(1)~Each value is $\mle{T}(r)+a_TZ(r)$ with $a_T$ uniform and $Z\ne 0$ at the point, and each
+$a_T$ is used at one point only. (2)~The non-constant coefficients of the round-$j$ polynomial of a
+mask $g$ are $2^{m-j-1}c_{j,t}$, and $G$ is $2^m a_0$ plus a function of the $c_{j,t}$. The map
+from the coefficients of $g$ to $(G,\text{round messages})$ is therefore a triangular affine
+bijection. Because $\rho_A,\rho_B,\rho_C\neq 0$, the messages of the masked sumcheck are uniform
+subject to the verifier's checks~\cite{CFS17,Libra}. (4)~The rows $m_v$ and $m_{\mathsf{prox}}$ are
+uniform and each is used once, so $\bar u_v$ and $p$ are uniform, and the check of step~5 determines
+$\mu$. (5)~By Lemma~\ref{lem:hide}, the opened entries of data rows are uniform; in both the real and
+the simulated transcript, the checks determine the entries of the mask rows. (6)~The salts hide the
+unopened leaves.
+\end{proof}
+
+\paragraph{The mechanised statement.}
+Theorem~\ref{thm:zk} is machine-checked for the field values of the transcript: the masked
+evaluations, the mask sums and round messages of the three sumchecks, $\mu$, the slot and
+proximity vectors, and the opened entries of all rows. The statement has a permutation form. For
+fixed good challenges, the list of honest transcripts over all prover coins is a permutation of the
+list of simulated transcripts over all simulator coins, so the two distributions are equal. The
+honest prover is instantiated with the tables, summands and row layout of the implementation. Three
+points of the proof sketch above become explicit in the mechanisation.
+\begin{itemize}[leftmargin=1.2em,itemsep=1pt,topsep=3pt]
+\item The mask table is randomness of the sumcheck layer and, at the same time, data of a committed
+  row. The map from all prover coins to the free values of the transcript is therefore not a product
+  of two bijections but a triangular one: the opening's part depends on the layer's coins. A short
+  composition lemma handles this.
+\item The simulator of the opening needs one value from the sumcheck layer, the batched target
+  value $V$ of step~(3). It recomputes $V$ from the layer transcript as the verifier does, from the
+  masked evaluations and the final values of the three sumchecks. On honest transcripts this gives
+  the true value.
+\item The proximity vector combines all rows of a matrix, including the two $\Zq$-rows of each slot
+  mask. In the opened columns, the simulator therefore solves for the slot mask rows first and for
+  the proximity mask rows last.
+\end{itemize}
+Besides good challenges, the mechanised statement assumes that the evaluation points have order at
+least $n$ and that the opened columns come from the verifier's draw. We prove that this draw gives
+distinct columns, in range, and as many as there are pads. Hashes of unopened leaves are outside the
+model.
+
+\paragraph{The executable prover.}
+The honest prover of the model computes its messages from functions on the cube. The executable
+prover of Section~\ref{sec:mech} instead folds tables of integers and sends each round polynomial
+as its values at the nodes $0,2,\dots,d$. We prove that the two agree. Folding a table at $r$
+evaluates its multilinear extension at $r$ in the first free variable. Every round message of the
+executable sumcheck is therefore the round polynomial of the masked summand of the original tables,
+and these summands are, pointwise, the summands $g_A$, $g_B$, $g_C$ of the model. For $g_B$ this
+uses the fact that the folded witness table is the extension of $W$ with its last $\log\tau$
+variables fixed at $r_A$. We match the masked evaluations, the totals $G$ of the masks, $\mu$, the
+slot and proximity vectors and the opened column entries in the same way, and we show that the rows
+that store the masks of the opening hold the model's masks.
+
+The result is the following. For prover coins built from the model's coins, every run of the
+executable prover returns a proof whose elements of $\F$ form the model's honest transcript at the
+challenges of that run. Conversely, for fixed salts, every coin record of the prover's shape with
+entries in $[0,q)$ arises in this way from exactly one tuple of model coins, so uniform coins of the
+prover are uniform coins of the model. Two limits of the model remain. The statement concerns the
+field elements of the proof, not its hashes, salts and Merkle paths. And the challenges are fixed,
+whereas in a run of the non-interactive prover they depend on the coins through the hash
+(Section~\ref{sec:fs}).
+
+%% =======================================================================================
+\section{Non-interactive proofs}
+\label{sec:fs}
+%% =======================================================================================
+
+We obtain the non-interactive proof with the BCS transformation~\cite{BCS16}. Oracles become Merkle
+roots, and every challenge is the hash of the parameters, the statement and all earlier prover
+messages. The quantity that governs its security is round-by-round soundness~\cite{Hol19}.
+
+Round-by-round soundness requires a \emph{state function}: a predicate ``doomed'' on partial
+transcripts with four properties. For a false statement the empty transcript is doomed. A complete
+doomed transcript is rejected. Every prover message keeps a doomed transcript doomed or makes the
+verifier reject. And every verifier message takes a doomed transcript to a non-doomed one only with
+small probability, whatever the transcript so far. Our state function follows the proof of
+Theorem~\ref{thm:sound}, read forwards.
+
+As in Theorem~\ref{thm:sound}, decode every committed row when its batch is committed. Call a partial
+transcript \emph{far} if one of the committed matrices has no decoding with at most $e$ bad columns.
+Table~\ref{tab:rbr} assigns to each point of the protocol a \emph{claim} about the decoded rows and
+the messages so far. A partial transcript is \emph{doomed} if it is far or its current claim is
+false. After the challenges $c,\gamma$ of the opening, ``far'' refers to the $\gamma$-combinations
+instead of the matrices. After the vectors of the opening, the transcript is doomed if a sent vector
+differs on more than $e$ columns from the committed combination it stands for.
+
+\begin{table}[t]
+\caption{State function of Proposition~\ref{prop:rbr}: the claim that holds on non-doomed
+transcripts after each message, and the event by which a verifier message leaves a doomed
+transcript (escape). Prover messages have no escape.}
+\label{tab:rbr}
+\small
+\begin{tabular}{@{}p{0.17\columnwidth}p{0.47\columnwidth}l@{}}
+\toprule
+after & claim on the decoded rows & escape\\
+\midrule
+commit $W,\sigma$ & $(\sigma,W)$ is a witness & --\\
+$\rho,\alpha,\beta$ & $W$ ternary, and the projected multisets are equal with non-zero denominators & $\frac{2\tau-1}{|\F|}$\\
+commit $u,\uh$ & also $u=1/h$, $\uh=1/\hh$ on the cube and $\sum(u-\uh)=0$ & --\\
+$t_c,k,\rho_A$ & $W$ ternary, and the claim of A is true & $\frac{\ell+1}{|\F|}$\\
+round of A & $W$ ternary, and the running claim of A is true & $\frac{5}{|\F|}$\\
+$U,\hat U,s,H$ & $W$ ternary, and the four values and $g_A(r)=\gamma_A$ are true & --\\
+$\rho_B$ & the above with $H$ replaced by the claim of B & $\frac{1}{|\F|}$\\
+round of B & likewise with the running claim of B & $\frac{2}{|\F|}$\\
+$t_z,k^C,\rho_C$ & the claims so far, and the claim of C & $\frac{m+1}{|\F|}$\\
+round of C & likewise with the running claim of C & $\frac{7}{|\F|}$\\
+$\msk{w}_k(r_z)$ & the nine linear claims of step~7 & --\\
+$\kappa$ & the batched value is the value on the decoded rows ($V'=V$) & $\frac{1}{|\F|}$\\
+$\mu$ & unchanged & --\\
+$c,\gamma$ & $\mu'+cV'=\mu+cV$, and no $\gamma$-combination is far & $\max(\epsprox,\frac{1}{|\F|})$\\
+vectors & every vector agrees with its committed combination on all but $e$ columns & --\\
+columns & every queried column agrees & $(1-\frac{e}{n})^{\nq}$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{proposition}[Round-by-round soundness]\label{prop:rbr}
+With the state function of Table~\ref{tab:rbr}, the interactive protocol has round-by-round
+knowledge error
+\[
+  \epsrbr=\max\Bigl\{\frac{\max(2\tau-1,\;m+1,\;7)}{|\F|},\;\epsprox,\;\Bigl(1-\frac{e}{n}\Bigr)^{\nq}\Bigr\}
+  \;\le\;2^{-128}
+\]
+for our parameters.
+\end{proposition}
+
+\begin{proof}
+\emph{Initial and final states.} If the decoded $(\sigma,W)$ is not a witness, the empty
+transcript after the first commitment is doomed. A complete doomed transcript is rejected: either a
+queried column differs from what the vectors imply, or the opening equation of step~5 of the opening
+fails.
+
+\emph{Verifier messages.} Each row of Table~\ref{tab:rbr} with an escape is one event of
+Table~\ref{tab:budget}, now conditioned on a fixed doomed prefix. For $\rho,\alpha,\beta$ it is
+Lemma~\ref{lem:logder}; ternarity does not depend on the challenge. For $t_c,k,\rho_A$, for $\rho_B$
+and for $t_z,k^C,\rho_C$, the claim after the message is a random linear combination, or the value of
+a polynomial of degree at most $\ell+1$, $1$ and $m+1$ respectively, of quantities fixed before the
+message, one of which is non-zero. In every sumcheck round, a false running claim becomes true for
+at most $d$ challenges, whatever round polynomial the prover sends, with $d\le 5$, $2$, $7$. For
+$\kappa$, a non-zero vector of claim errors gives a zero combination with a uniform $\kappa$ with
+probability $1/|\F|$. For $c,\gamma$, the two escapes belong to disjoint cases. If no matrix is far,
+the equation $\mu'-\mu=c(V-V')$, with $V\ne V'$ fixed before $c$, has one solution. If a matrix is
+far, its $\gamma$-combination is close with probability at most $\epsprox$ (Lemma~\ref{lem:prox}).
+For the columns, a vector that differs from its committed combination on more than $e$ of the $n$
+columns is caught unless all $\nq$ queries miss.
+
+\emph{Prover messages.} Committing more rows cannot undo ``far''. The second commitment keeps a
+false multiset equality false: if $u=1/h$ and $\uh=1/\hh$, then $\sum(u-\uh)$ is the difference of the
+two sides of Lemma~\ref{lem:logder}. The values $U,\hat U,s,H$ and $\msk{w}_k(r_z)$ either fail the
+final check of their sumcheck, and the verifier rejects, or one of the claims they introduce is
+false, since the final check equates the running claim with the summand evaluated from them. The
+value $\mu$ does not enter the claim of its row. The vectors of the opening either agree with the
+committed combinations on all but $e$ columns, in which case the opening equation is the equation
+on the decoded rows by Lemma~\ref{lem:cons}, or they do not, in which case the next state is doomed
+by definition.
+
+Since $\ell+1\le m+1$ and $5\le 7$, the largest escape is the bound of the proposition.
+\end{proof}
+
+This proof is on paper. Its transitions are the counted events of the mechanisation. The sumcheck
+transition is mechanised in exactly this form (\texttt{SumcheckSound.v: sc\_round\_rbr}: from a
+doomed state, at most $d$ challenges lead to a state that is not doomed, for any round polynomial;
+\texttt{sc\_doomed\_final}), and the other escapes are the per-message counts used in the proof of
+Theorem~\ref{thm:sound}. The state function itself, the composition over the messages, and the BCS
+transformation with its Merkle trees are not mechanised.
+
+\begin{theorem}[Non-interactive security]\label{thm:nizk}
+Assume Proposition~\ref{prop:rbr}. In the random-oracle model, the non-interactive shuffle proof
+has knowledge error at most $t\,\epsrbr+O(t^2/2^{256})$ against provers with $t$ classical
+queries~\cite{BCS16,Hol19}, and $O(t^2\,\epsrbr+t^3/2^{256})$ against provers with $t$ quantum
+queries~\cite[Thm.~3]{CMS19}. It is statistically zero-knowledge.
+\end{theorem}
+
+The quantum statement assumes that the theorem of~\cite{CMS19} applies to our concrete hashing
+layout, which differs in details from the textbook compiler: salted column leaves, a hash-chain
+transcript, and rejection sampling of field elements. With $\epsrbr\approx 2^{-128}$, the quantum
+bound is meaningful for up to about $2^{64}$ queries. A deployment that targets a higher quantum
+query bound would increase $\nq$.
+
+%% =======================================================================================
+\section{The decryption proof}
+\label{sec:dec}
+%% =======================================================================================
+
+A decryption server proves knowledge of a witness for $\Rdec$. Let $B=\mathit{base}^{\,k}$ with
+$B<q$. The prover writes every coefficient of the noise as
+\[
+  E=\sum_{d<k}\mathit{base}^{\,d}\,\delta_d-B/2,\qquad \delta_d\in\{0,\dots,\mathit{base}-1\},
+\]
+and the protocol runs as follows.
+\begin{enumerate}[leftmargin=1.5em,itemsep=1pt,topsep=3pt]
+\item The prover commits to the digit tables $\delta_0,\dots,\delta_{k-1}$, each of length $\tau N$,
+  in the big matrix, and to $s$, $e$ and the mask table in the small matrix.
+\item The verifier sends $\theta\in\F^{\ell}$ and $\theta_1,\theta_2\in\F^{\log N}$. This compresses
+  relations (D) and (K) into two linear claims with public value zero:
+  \begin{align*}
+    \sum_{i,x}\eq(\theta,i)\,\eq(\theta_1,x)\,\bigl[t_i-su_i-pE_i\bigr]_x&=0,\\
+    \sum_{x}\eq(\theta_2,x)\,\bigl[b-as-pe\bigr]_x&=0 ,
+  \end{align*}
+  where $[\cdot]_x$ denotes coefficient $x$. The product $su_i$ is linear in $s$, and, as in the
+  shuffle proof, the verifier moves it to the public side with the adjoint of multiplication by
+  $u_i$.
+\item A masked sumcheck over $m$ variables, of degree $\mathit{base}+1$ and of degree
+  $2\,\mathit{base}+1$ in the last round, proves $\prod_{v<\mathit{base}}(\delta_d-v)=0$ for all
+  digits.
+\item A masked sumcheck over $\log N$ variables, of degree $4$ and of degree $7$ in the last round,
+  proves $s^3=s$ and $e^3=e$.
+\item One opening settles $k+6$ linear claims.
+\end{enumerate}
+
+\begin{theorem}\label{thm:dec}
+The decryption proof is honest-verifier zero knowledge in the sense of Theorem~\ref{thm:zk}. As an
+interactive oracle proof, it has knowledge error at most
+\[
+  \frac{(\mathit{base}+3)\,m+6\log N+\mathit{base}+7}{|\F|}+2\,\epsprox+\Bigl(1-\frac{e}{n}\Bigr)^{\nq}.
+\]
+\end{theorem}
+
+The proof follows those of Theorems~\ref{thm:sound} and~\ref{thm:zk}. The range proof is
+\emph{exact}: digits in $\{0,\dots,\mathit{base}-1\}$ and $B<q$ give $-B/2\le E<B/2$ over the
+integers, so there is no gap between the bound that honest provers satisfy and the bound that is
+proven. Relation (K) with ternary $s,e$ is also what a server proves about its key share at key
+generation.
+
+The soundness half of Theorem~\ref{thm:dec} is machine-checked for the protocol as implemented, with
+the same structure and hypotheses as for the shuffle proof. The sumcheck layer contributes
+$(\mathit{base}+3)\,m+6\log N+\mathit{base}+5$ over $|\F|$, and the two opening lines bring this to the
+numerator of the theorem. The adjoint of negacyclic multiplication connects the two compressed
+claims to the committed rows: the public side minus the claim's value on the decoded rows is the
+multilinear extension of the defect table of (D) or (K), respectively. For the range proof, the
+mechanisation shows that every digit lies in $\{0,\dots,\mathit{base}-1\}$ and that such digits
+give an integer below $B$. Every noise coefficient is therefore $v-B/2$ for a natural number $v<B$,
+that is, $-B/2\le E<B/2$.
+
+Zero knowledge of the decryption proof is machine-checked in the same form as for the shuffle proof
+(Theorem~\ref{thm:zk}): for fixed good challenges, the honest transcripts over all coins are a
+permutation of the simulated ones. The sumcheck layer, with its two masked zero-test sumchecks, is
+proven for any field. The opening holds for any committed data, because its check equation is the
+batching identity together with the fact that pads lie outside every slot vector. The witness enters
+only where the simulator of the opening recomputes the batched target value from the layer
+transcript, which uses the two compressed claims and the row layout.
+
+The executable decryption prover refines this model in the same way as the shuffle prover
+(Section~\ref{sec:zk}). For prover coins built from the model's coins, every run returns the model's
+honest transcript at its challenges, and coin records of the prover's shape correspond one to one to
+model coins. Here the mask table of the layer is the third data row of the small matrix, and the
+random rows of both matrices hold the real and imaginary parts of the slot and proximity masks.
+
+%% =======================================================================================
+\section{Mechanisation}
+\label{sec:mech}
+%% =======================================================================================
+
+The development is written in the Rocq prover~\cite{Rocq}, version~9.2. It has about $26{,}500$
+lines of its own, plus about $11{,}000$ lines of general libraries for algebra, probability and
+utilities. We check that $335$ main theorems are closed under the global context, that is, that they
+use no axioms. The primality certificate of $q$ is checked with the Pocklington checker of
+CoqPrime~\cite{GTW06}, which needs no axioms either.
+
+\paragraph{Structure.}
+The generic part (about $13{,}100$ lines) works over an arbitrary field with decidable equality. It
+contains the multilinear extension, sumcheck soundness and completeness, the masked sumcheck,
+Reed--Solomon codes and the opening, the row layouts of both proofs, the two soundness theorems, and
+the zero-knowledge statements for transcripts. Probabilities are counts. Given a duplicate-free list
+of all field elements, an event has probability at most $k/|\F|$ when at most $k\,|\F|^{n-1}$
+challenge tuples satisfy it, and the composition of several messages is a lemma about such counts.
+The instance part (about $13{,}200$ lines) fixes $\F=\Zq[t]/(t^2-3)$ for the $q$ of
+Section~\ref{sec:prelim}, proves that it is a field, and instantiates the generic theorems. It also
+contains the executable code.
+
+\paragraph{From the protocol to the implementation.}
+Two decisions make the soundness theorems apply to the code rather than to an idealised protocol.
+First, we model the opening as the implementation runs it. Each claim is a list of terms (slot, row,
+coefficient, public vector), tensor and functional slots are compiled into the vectors and rows that
+the verifier uses, and a mask row over $\F$ is a pair of $\Zq$-rows with weights $1$ and $t$.
+Second, the row layout is explicit: which rows hold $W$, $\sigma$, $u$, $\uh$ and the mask table, and
+at which offsets the mask table stores each mask. For this layout we prove that the values of the
+claims on the decoded rows equal the ideal values used by the sumcheck argument.
+
+\paragraph{Executable code.}
+The verifiers and provers are written in Rocq over pairs of integers, and we prove that they compute
+the field operations of $\F$. The extraction to OCaml~\cite{Letouzey02} maps integers to arbitrary
+precision. Each verifier has a \emph{front end}, which parses the bytes, replays the Fiat--Shamir
+transcript and checks the Merkle paths, and a \emph{back end}, which does the algebra. For the back
+end we prove the following: if it accepts, then, for the challenges of the transcript, the claimed
+values, the claims and the opening checks are exactly the events whose number the soundness theorems
+bound.
+
+For the shuffle prover we prove completeness: for a valid witness and any random coins, if the prover
+returns a proof, the verifier accepts it. The prover returns no proof only when it would divide by
+zero. For zero knowledge we prove that the prover refines the model of Theorem~\ref{thm:zk}
+(Section~\ref{sec:zk}). The decryption prover is written in the same way and reuses the claims and
+slots of the decryption verifier. We prove it complete as well, and we prove that it refines the
+zero-knowledge model of the decryption proof in the same sense as the shuffle prover. Its digit check
+is the product $\prod_{v<\mathit{base}}(D-v)$ expanded into its coefficients. Besides relations (D)
+and (K) and ternary $s,e$, completeness needs $(E+\mathit{off}) \bmod q < \mathit{base}^{k}$, so that
+the digits recombine to the noise. The digit check itself passes for any noise, because every digit
+is reduced modulo $\mathit{base}$.
+
+SHA-256 is HACL*'s verified implementation~\cite{HACL17}, called through a thin OCaml binding. We also
+keep a Rocq definition of SHA-256 and compare it with HACL*'s in tests.
+
+\paragraph{Trusted base.}
+The following are not proven and are trusted when the extracted code runs: the parsers, the
+transcript and the Merkle checks, which are only tested; the OCaml drivers that read files and
+compute code parameters; the extraction mechanism, the OCaml compiler and the integer library; the
+replacement of ten list functions and four arithmetic functions on natural numbers from the standard
+library by their OCaml counterparts; and the agreement of HACL*'s SHA-256 with the Rocq definition,
+which is tested. The soundness theorems themselves are about the interactive protocols, and
+Section~\ref{sec:fs} is needed to transfer them to the hashed proofs.
+
+\paragraph{Engineering notes.}
+Two pitfalls cost us time, and we record them for similar developments. A proof about code that
+draws Fiat--Shamir challenges should keep the drawing operation abstract. With the concrete
+challenger, a case analysis on a draw can make the kernel evaluate SHA-256 on symbolic data while it
+checks the proof. Similarly, a statement should not hide the enumeration of all elements of $\F$
+behind a defined constant. A conversion that unfolds the constant starts computing a list of $q^2$
+elements. One such proof took eight minutes to check before we changed it, and about a second after.
+
+\subsection{What the formalisation found}
+\label{sec:findings}
+
+\begin{itemize}[leftmargin=1.2em,itemsep=2pt,topsep=3pt]
+\item The error bounds of Theorems~\ref{thm:sound} and~\ref{thm:dec} are confirmed term by term.
+\item The masked sumcheck needs $2\ne 0$ in $\F$, and the sumcheck that linearises $h$ needs
+  $N\ne 0$. Both hold in odd characteristic $q>N$, but neither condition had been stated.
+\item Soundness does not need $\rho_A,\rho_C\ne 0$ (Section~\ref{sec:shuffle}).
+\item The opening has two kinds of slot, and the earlier description covered only one
+  (Section~\ref{sec:pcs}). For two matrices, the query term is a maximum, not a sum.
+\item The proof of Appendix~\ref{app:prox} holds with the constant $(e+2)/|\F|$. We restructured its
+  second step as an induction on the rows (decoding is affine), followed by the covering argument.
+\item The extracted witness lives in $\F$. Soundness does not need the fact that the committed rows
+  are over $\Zq$.
+\item The zero-knowledge argument needs the composition and ordering details listed after
+  Theorem~\ref{thm:zk}. The simulator of the implementation already followed them.
+\end{itemize}
+
+%% =======================================================================================
+\section{Evaluation}
+\label{sec:eval}
+%% =======================================================================================
+
+All measurements in this section run code extracted from the development of
+Section~\ref{sec:mech}: the shuffle prover and the shuffle verifier, each with its unverified OCaml
+driver, which reads the files and computes the code parameters. The extracted code is written to be
+proven correct, not to be fast: it computes with lists of arbitrary-precision integers.
+
+\paragraph{Setup.}
+We use $N=4096$, $q\approx 2^{78}$, $\lambda=128$, proximity regime $\Delta=3$ and rate $1/4$, on one
+core of an Apple M5~Max with OCaml~5.4, Zarith, and SHA-256 from HACL*. The prover draws its coins
+from the operating system. A separate script generates statements and witnesses, and we do not time
+this step.
+
+\begin{table}[t]
+\caption{Extracted shuffle prover and verifier, one core, $N=4096$, $\lambda=128$, $\Delta=3$,
+rate $1/4$. Memory is the peak resident size.}
+\label{tab:xbench}
+\small
+\begin{tabular}{@{}rrrrrr@{}}
+\toprule
+ballots & prove & verify & proof & prover & verifier\\
+ & (s/ballot) & (s) & (MB) & memory (GB) & memory (GB)\\
+\midrule
+16  & 0.43 & 1.0 & 0.90 & 0.46 & 0.20\\
+256 & \xbProveA & \xbVerA & \xbSizeA & 5.9 & 2.1\\
+1024 & 0.29 & 17.6 & 3.78 & 19.8 & 8.3\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Results.}
+Table~\ref{tab:xbench} gives the results. The extracted verifier accepts the proof in every run. The
+proof size follows from the parameters: it grows with the square root of the number of ballots
+(Section~\ref{sec:overview}), while the statement grows linearly. The prover's time per ballot falls
+as the number of ballots grows, because part of its work is per proof. Its memory is dominated by the
+witness and the encoded matrices, which are held as lists of boxed integers.
+
+Three changes made the extracted code usable at this size. First, the verifier projects the public
+key with the adjoint of negacyclic multiplication (Section~\ref{sec:shuffle}), and the prover needs
+the same projection. Computed directly, it takes $N^2$ products. We replaced it by three NTTs and a
+pointwise product, and proved that the result is the same: at the roots $z$ of $X^N+1$, the adjoint
+of $a$ applied to $\rho$ takes the value $a(z^{-1})\rho(z)$, and an inverse NTT recovers the
+coefficients. The code checks the required facts about the chosen root of unity at run time and
+falls back to the direct computation if they fail, so the equality holds without hypotheses.
+Extracted code does not share values between definitions, and the prover computed this projection
+$21$ times per proof. At $16$ ballots the change took the prover from $209$\,s to $7$\,s, and the
+verifier from $10.6$\,s to $1.0$\,s. Second, at extraction, the list functions of the standard
+library (\texttt{map}, \texttt{app}, \texttt{seq} and a few others) are replaced by OCaml's
+tail-recursive versions. The extracted definitions recurse once per element, and OCaml~5 scans the
+whole stack at every minor collection, which made the verifier quadratic in practice. Third, the
+opened columns of the slot and proximity vectors are read from one NTT encoding per vector instead of
+one Horner evaluation per column. Again we prove that the check computes the same values.
+
+\paragraph{Tests.}
+On four parameter sets in each proximity regime ($N$ from $8$ to $64$, $2$ to $64$ ballots), the
+extracted verifier accepts the proofs of the extracted prover. It rejects ten bit-flipped proofs, a
+truncated proof, and the statement in which two outputs exchange one CRT slot
+(Section~\ref{sec:overview}). We compare a Rocq definition of SHA-256 with HACL*'s on test inputs.
+
+\paragraph{Decryption proof.}
+For $16$ ballots, $28$ base-$4$ digits (a noise range of $2^{56}$) and the parameters above, the
+extracted decryption prover takes $62.5$\,s ($3.9$\,s per ballot, $2.4$\,GB) and the extracted
+decryption verifier takes $2.5$\,s. The proof has $1.93$\,MB. On four parameter sets in each
+proximity regime (digit bases $2$, $4$, $8$ and $16$), the extracted verifier accepts the extracted
+prover's proofs and rejects six bit-flipped proofs, a truncated proof and a changed statement.
+Running the prover at full size exposed a cost in the verifier's claims. The digit weights
+$\mathit{base}^d$ were computed as natural numbers, which extraction implements by repeated addition:
+$2^{54}$ steps for $d=27$. They are now computed as integers, with the same proof.
+
+%% =======================================================================================
+\section{Related work}
+\label{sec:related}
+%% =======================================================================================
+
+\paragraph{Lattice shuffles.}
+Costa, Mart\'inez and Morillo~\cite{CMM19} and Strand~\cite{Strand18} gave early proofs of shuffle
+for lattice ciphertexts. Aranha et al.~\cite{ABGSctrsa21} and Farzaliyev, Willemson and
+Kaasik~\cite{FWK21} gave practical constructions for voting, and~\cite{ABGS23} gave the mix-net with
+distributed decryption that we build on. Herranz, Mart\'inez and S\'anchez~\cite{HMS21} obtain
+sublinear lattice-based shuffle proofs by expressing the shuffle as an arithmetic circuit over $\Zq$;
+their work has no implementation. Bootle et al.~\cite{BLM25} found the soundness flaw discussed above
+and repaired the lattice-based argument with a product argument whose tags have invertible pairwise
+differences. Our tagged logarithmic derivative plays the same role over a field. Abdolmaleki et
+al.~\cite{AbdShuffle} give a lattice-based shuffle argument from subset checking, and
+Orthus~\cite{Orthus} batch-verifies lattice relations with sublinear proofs. Our work differs from all
+of these in the proof system: we use no lattice commitments, and we obtain statistical soundness in
+the random-oracle model. We do not know of an earlier hash-based proof of shuffle for lattice
+ciphertexts, but our literature search was limited.
+
+\paragraph{Verified mix-nets and cryptographic code.}
+Haines, Gor\'e and Sharma~\cite{HGS21} verified in Coq a verifier for the discrete-logarithm shuffle
+of Terelius and Wikstr\"om and extracted it to check real election data. Our mechanisation follows a
+similar route for a hash-based proof over lattice ciphertexts, and it also covers zero knowledge and
+the completeness of the provers. HACL*~\cite{HACL17} provides the verified SHA-256 that our extracted
+code calls.
+
+\paragraph{Proof systems.}
+The commitment is that of Ligero~\cite{AHIV17}, used as a polynomial commitment as in
+Brakedown~\cite{Brakedown}, and the proximity analyses are from~\cite{AHIV17,DP23,BCIKS20}. The masked
+sumcheck is from~\cite{CFS17,Libra}, and the logarithmic-derivative argument is from
+Hab\"ock~\cite{Hab22}. To our knowledge, the combination of a random projection of ring elements with
+a tagged logarithmic derivative is new, and so is the resulting separation of the linear part of the
+relation from the permutation and shortness conditions. Succinct lattice-based
+commitments~\cite{LaBRADOR,NS24} or a folding opening~\cite{BaseFold} could replace our opening and
+make the proof smaller, at the price of computational soundness or a more involved analysis.
+
+\paragraph{Compressing ring elements to a field.}
+Compressing ring elements to a field with a random functional has precedents. Fiore, Gennaro and
+Pastro~\cite{FGP14} hash BV ciphertexts by evaluating them, without reduction modulo the cyclotomic
+polynomial, at a random point. This hash is a ring homomorphism with collision probability $(c+N)/q$.
+Fiore, Nitulescu and Pointcheval~\cite{FNP20} handle the reduction modulo $R(X)$ with a committed
+quotient and evaluation at a random point. These hashes preserve multiplication, which our relation
+does not need: it multiplies only by the public key, so it is $\Zq$-linear in the witness. We
+therefore use an unstructured random linear form over $\mathrm{GF}(q^2)$, whose collision probability
+$1/|\F|$ does not depend on $N$. The adjoint step $\rho'=\rho\Mpk$ uses the identity behind lattice
+proofs of inner products: the inner product of coefficient vectors is the constant coefficient of
+$\sigma_{-1}(a)\,b$, where $\sigma_{-1}$ maps $X$ to $X^{-1}$, as in Lyubashevsky, Nguyen and
+Plan\c{c}on~\cite{LNP22}.
+
+%% =======================================================================================
+\section{Limitations and future work}
+\label{sec:limits}
+%% =======================================================================================
+
+\paragraph{Proofs.}
+The soundness and zero-knowledge theorems of both proofs and Appendix~\ref{app:prox} are
+machine-checked. The following are not. The line lemma and the proximity gap
+of~\cite{DP23,BCIKS20} are cited and enter the mechanisation as hypotheses; we checked the cited
+statements against the papers, but not page by page. Proposition~\ref{prop:rbr} is proven on paper:
+its transitions are mechanised, but its state function and the composition are not. The BCS
+transformation with its Merkle trees is outside the mechanised model, and Theorem~\ref{thm:nizk}
+relies on our hashing layout matching the compiler analysed in~\cite{BCS16,CMS19}. The
+zero-knowledge theorems are mechanised for provers over $\F$ built from the tables and row layout of
+the executable code. For both proofs, we prove that the extracted prover sends exactly these
+messages, at fixed challenges and apart from hashes, salts and Merkle paths. Finally, the theorems
+count the challenges for which events occur. The step from these counts to the success probability
+of an adversary in the random-oracle model is the standard one and is not mechanised.
+
+\paragraph{Scope.}
+We prove statements about one mix server and one decryption server. We do not give a statement about
+the whole mix-net, including the noise budget across several mix servers and the privacy that follows
+from BGV. We do not analyse key generation. Relation (K) lets a server prove that its key share is
+well formed, but a distributed key generation that is secure against rushing adversaries is future
+work. The number of ballots must be a power of two. The natural fix is to pad with trivial
+ciphertexts at public positions, which needs a short lemma.
+
+\paragraph{Implementation.}
+The extracted code computes with lists of arbitrary-precision integers and is slow
+(Section~\ref{sec:eval}). A version over machine words with arrays, proven equal to the present one,
+is future work. The proof format hashes leaves, nodes and the transcript without domain separation,
+and the prover is not constant-time. The drivers that read files and compute the code parameters are
+not verified. These issues must be fixed before any use beyond experiments.
+
+\paragraph{Smaller proofs.}
+We have estimated, but not built, two restructurings. Folding the linearisation into the shortness
+sumcheck would open the big matrix at one point instead of two, for an estimated reduction of $14\%$
+to $20\%$. Using the slot vector as the proximity test would then give an estimated $35\%$ to $41\%$
+in regime $\Delta=3$, and requires the tensor proximity result of~\cite{DP23}.
+
+%% =======================================================================================
+\section{Conclusion}
+%% =======================================================================================
+
+Apart from a permutation and a shortness condition, the mix-net relation for BGV is linear over
+$\Zq$. We project each ciphertext to one field element and prove the relation over a field. This
+removes the algebraic structure that broke the ring-based shuffle argument and lets us use standard
+hash-based tools; neither proof rests on a lattice assumption. The soundness and zero knowledge of
+both proofs, and the correctness of the executable verifiers and provers, are machine-checked. Both
+extracted provers are complete and send the messages of the zero-knowledge model. Only a cited
+proximity lemma and the Fiat--Shamir step are left to pen and paper.
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\appendix
+
+%% =======================================================================================
+\section{From lines to affine spaces}
+\label{app:prox}
+%% =======================================================================================
+
+We prove Lemma~\ref{lem:prox} for $\Delta=3$ from the line lemma. Let $\mathcal{C}$ be a linear
+code of length $n$ and distance $d$ over $\F$, and let $e\le\lfloor(d-1)/3\rfloor$ with $e+1<|\F|$.
+A word is \emph{close} if it is within distance $e$ of $\mathcal{C}$.
+
+\begin{lemma}[Line lemma {\cite[Thm.~2.1]{DP23}}]\label{lem:line}
+Let $x,y\in\F^n$. If more than $e+1$ points $\gamma\in\F$ make $x+\gamma y$ close, then there is a
+set of at most $e$ coordinates outside which both $x$ and $y$ agree with codewords.
+\end{lemma}
+
+Let $U=m_{\mathsf{prox}}+\mathrm{span}(\mathit{row}_1,\dots,\mathit{row}_R)$, parametrised by
+$\gamma\in\F^{R}$, and suppose that more than an $(e+2)/|\F|$ fraction of $U$ is close. If $U$ is a
+line, Lemma~\ref{lem:line} applies directly, so assume $\dim U\ge 2$.
+
+\emph{Every point of $U$ is close.} Fix $u\in U$. The lines through $u$ partition
+$U\setminus\{u\}$, and each of them contains $|\F|-1$ points other than $u$. If every such line had
+at most $e+1$ close points other than $u$, the fraction of close points in $U$ would be at most
+$(e+1)/(|\F|-1)\cdot(1-1/|U|)+1/|U|\le(e+2)/|\F|$. So some line through $u$ has at least $e+2$ close
+points other than $u$. Lemma~\ref{lem:line}, applied to a base point and the direction of that line,
+shows that every point of the line is close, in particular $u$.
+
+\emph{A common error set.} Any two points of $U$ lie on a line whose $|\F|>e+1$ points are all close.
+By Lemma~\ref{lem:line} they agree with codewords outside a common set of at most $e$ coordinates.
+Since $2e<d$, decoding within distance $e$ is unique, so the decoding map is affine on $U$. The error
+vectors of the points of $U$ therefore form an affine space in which every vector has weight at most
+$e$. Suppose its joint support had more than $e$ coordinates. Then some combination of at most $e+1$
+of its elements, with coefficients that avoid at most $e+1$ bad values, would have weight above $e$;
+such coefficients exist because $e+1<|\F|$. Hence the joint support has at most $e$ coordinates.
+Outside it, every element of $U$ and every direction of $U$, in particular every row, agrees with a
+codeword. This contradicts the hypothesis of Lemma~\ref{lem:prox}.
+
+\end{document}
